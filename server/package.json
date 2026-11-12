@@ -1,0 +1,1 @@
+{"name":"finsight-server","private":true,"type":"module","scripts":{"dev":"node --watch server.js","start":"node server.js","seed":"node seed.js","test":"node --test"},"dependencies":{"bcrypt":"^6.0.0","cookie-parser":"^1.4.7","csv-parser":"^3.2.0","dotenv":"^16.4.0","express":"^5.1.0","jsonwebtoken":"^9.0.0","mongoose":"^8.0.0","multer":"^2.0.2","nodemailer":"^10.5.0"}}

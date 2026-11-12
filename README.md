@@ -33,7 +33,7 @@ Open http://localhost:5173. Register a new account, or sign in to the seeded acc
 
 ## Pages and features
 
-- **Login / Register:** bcrypt passwords, signed JWT in an HTTP-only cookie, protected workspace.
+- **Login / Register:** bcrypt passwords, signed JWT in an HTTP-only cookie, verified-email requirement and protected workspace.
 - **Dashboard:** revenue, expenses, profit and margin; monthly bar chart, category donut, recent transactions. Choose a reporting period or custom dates.
 - **Transactions:** create/edit with the same form, confirmation before deletion, title search, exact category/type/date filters, table pagination.
 - **Analytics:** monthly bars, revenue line, category donut and income/expense area charts.
@@ -86,6 +86,8 @@ server/
 | POST | /api/auth/login | Authenticate and set cookie |
 | POST | /api/auth/logout | Clear cookie |
 | GET | /api/auth/me | Current user |
+| POST | /api/auth/verify-email | Verify the signed-in account's six-digit email OTP |
+| POST | /api/auth/resend-verification | Request a fresh email for the signed-in account |
 | POST | /api/auth/verify-2fa | Finish login using authenticator or recovery code |
 | GET | /api/security/two-factor | 2FA status and remaining recovery-code count |
 | POST | /api/security/two-factor/setup | Verify password and create a temporary setup key |
@@ -137,6 +139,30 @@ Without `TEST_MONGODB_URI`, unit tests run and the database integration test is 
 7. Under **Security activity**, review account creation, successful/failed login attempts for existing accounts, pending second-factor logins, failed code checks, 2FA setup/changes, logouts, session revocations and transaction deletions. Events record time, request IP and user agent; passwords, tokens, setup keys, recovery codes and financial details are never included. Events expire after approximately 90 days using MongoDB TTL cleanup. These records are application history, not tamper-proof external audit storage.
 
 Existing accounts require no migration and keep 2FA disabled until explicitly activated. Old stateless JWTs are intentionally rejected, so users must sign in again after updating. Two small collections (`Session` and `SecurityEvent`) support revocation and activity history; financial records remain unchanged. Expired sessions are rejected immediately even before MongoDB's asynchronous TTL cleanup removes them.
+
+## Email verification and mail delivery
+
+Configure a real mail provider in `server/.env` to send verification emails:
+
+```env
+SMTP_HOST=smtp.your-provider.example
+SMTP_PORT=587
+SMTP_FROM=FinSight <your-authorized-sender@example.com>
+SMTP_USER=your-smtp-username
+SMTP_PASS=your-smtp-password
+```
+
+These are placeholders: use the host, credentials and an authorized sender from your provider. Never paste passwords into chat or commit `.env`. Port 465 uses implicit TLS; other remote ports require STARTTLS. Local plain SMTP is allowed only for a development/test mail catcher on a loopback host. Production does not disable TLS certificate validation. Restart the backend after updating settings. Provider acceptance does not guarantee inbox delivery; check spam folders and your provider's delivery logs.
+
+Registration creates an **unverified account with a restricted session**. It attempts to send a six-digit email OTP and clearly reports if SMTP is not configured or delivery failed; the OTP is never returned in an API response or printed in logs. The restricted session can submit its OTP, check account status, resend to its own registered address or sign out, but cannot read or modify finances, call the AI assistant or access security controls. Signing in again retains the restriction until email ownership is verified. Two-factor authentication is still required for accounts that already have it enabled.
+
+Read the code in the latest email, enter it in **Email OTP**, and choose **Verify OTP**. Codes expire in **10 minutes** and can be used once. They are generated with `crypto.randomInt`, preserving leading zeros. Only a keyed HMAC-SHA256 digest is stored, bound to the user ID and a random challenge identifier; the key is the server's `JWT_SECRET`. Changing that secret invalidates pending codes, and users must sign in again and resend. The database does not store plaintext OTPs. A new email rotates the challenge and replaces the prior code. Resend has a **60-second** database-backed cooldown and shares the request limiter. Failed sends clear the undelivered challenge so the account can retry.
+
+OTP submission requires an authenticated session. The server verifies only that session's account and ignores any email/user ID supplied in the request body. Attempts are claimed atomically in MongoDB; after **5 incorrect attempts**, verification and resend are locked for **15 minutes**. Resend cannot clear an active lock. Correct verification is also atomic, so parallel requests cannot consume the code twice. A correct code updates the current user's state and opens the dashboard without creating a new session or bypassing password/2FA. Never share your OTP. If the page was open during the upgrade, refresh it and request a new code. Previously issued verification links no longer work; the old `/verify-email` page directs users to sign in and use the OTP screen.
+
+**Existing real accounts also need to verify** after this update. They are not silently marked verified and their transactions are retained. The development seed explicitly exempts only the synthetic `demo@finsight.local` account, whose mailbox cannot receive email. Running `npm run seed` in development updates that demo account; the seed is forbidden in production. There is no general verification bypass or API that accepts an `emailVerified` value from the browser. A typo in the registered email requires signing out and registering the correct address; changing account email is not included.
+
+Email delivery requires the SMTP configuration above. Integration tests use an isolated SMTP fixture to check real Nodemailer message submission, keyed code storage, expiry, cooldown, account binding, rejection of old links, resend invalidation, single-use races, parallel attempts, lockout, restricted access, failed delivery and legacy accounts. No real email is sent by tests. Transport setup follows the [official Nodemailer SMTP documentation](https://nodemailer.com/smtp).
 
 Authenticator secrets are encrypted with AES-256-GCM; recovery codes are random 80-bit values stored only as SHA-256 hashes. TOTP uses RFC 6238 HMAC-SHA1 and rejects reuse of an accepted time step. Pending challenges cannot access private endpoints. Account security versions invalidate sessions and challenges on 2FA changes and signing out all other sessions. Setup, enable and disable require the current password; disabling also requires a second factor. Setup and verification endpoints share the existing single-server request limiter.
 
@@ -192,6 +218,43 @@ Tests cover money conversion, date/range validation, search escaping, empty and 
 
 Deploy the Express server and MongoDB separately from static assets, with a reverse proxy forwarding `/api` to Express on the same public origin. Set `CLIENT_ORIGIN` to that exact HTTPS origin, `NODE_ENV=production`, a private MongoDB URI and a strong secret. Secure cookies require HTTPS. Vite's development proxy handles `/api` locally; no permissive CORS is needed. Never commit `.env`.
 
+### Single-service production deployment
+
+The Express server can also serve the built React client itself on the **same HTTPS origin**, simplifying cookie authentication and origin checks. The production server serves `client/dist`, supports direct React routes and exposes `GET /api/health`. No development preview server is used in production.
+
+- Project root: the `financial-dashboard` directory containing both `client` and `server`.
+- Build command: `npm run build:deploy` (installs the server/client dependencies and builds React).
+- Run command: `npm start`.
+- Node runtime: 22.x.
+- Port: use the hosting provider's injected `PORT`; expose that HTTP port and route `/` to it.
+- Health check: `/api/health`.
+- For Heroku-compatible Node buildpacks, `heroku-postbuild` runs the same deploy build.
+
+Set **hosting secrets**, never committed source files:
+
+```env
+NODE_ENV=production
+MONGODB_URI=<Atlas connection string with a database-scoped user>
+JWT_SECRET=<a new random production secret, at least 32 characters>
+MFA_ENCRYPTION_KEY=<a separate stable random encryption key>
+CLIENT_ORIGIN=https://<your-exact-hosted-domain>
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_FROM=FinSight <your-authorized-sender@gmail.com>
+SMTP_USER=<your-authorized-sender@gmail.com>
+SMTP_PASS=<your-app-password>
+```
+
+Set `TRUST_PROXY_HOPS=1` only when the hosting provider's trusted proxy configuration requires exactly one hop; otherwise leave it at 0. Only 0–2 hops are accepted. Do not replace TLS/cookie/origin protection with permissive CORS. Add the host's permitted outbound network range to Atlas access controls and use a user restricted to the `finsight` database. Creating a cloud database does not migrate local accounts or transactions automatically; data migration needs a separate decision. Do not run the development seed in production.
+
+Hosting must permit the mail transport you use. [Render's free services block outbound SMTP ports 25, 465 and 587](https://render.com/docs/free); email OTP will fail there without an HTTPS mail provider or a compatible paid service. [Koyeb documents SMTP submission over port 587](https://www.koyeb.com/docs/faqs/general), making it a candidate for the existing Gmail transport. Check account requirements, current pricing and the selected plan before creating resources.
+
+The local-only Ollama integration does **not** connect a deployed server to a model on your laptop. Public AI access requires an inference runtime co-hosted with the server or an explicitly approved cloud/provider integration. On a small host without Ollama, the assistant shows that the model is unavailable; financial tracking, charts and email verification continue to work. No cloud AI credentials have been configured and no financial data is automatically sent to a cloud model.
+
+Deployment is not complete until the hosted `/api/health`, registration, OTP email delivery, verification, cookie login and required AI setup are checked. Keep local `.env` files, SMTP passwords and private database credentials out of Git and downloadable source archives.
+
 This intentionally intermediate project loads a user's matching transactions into memory for analytics and paginates the table in the browser. For large datasets, replace these reads with MongoDB aggregations and server pagination. Login limits are in-memory for a single server; use durable account-aware rate limiting for a public, multi-server deployment. Request IPs are direct connection addresses unless a trusted reverse proxy is explicitly configured. User-agent strings describe a browser approximately and are not verified device identities. There is no password reset, role system, bank integration, forecasting, or PDF export. Authentication uses browser cookies rather than localStorage. For internet-facing production, add operational monitoring, backup policies and an independent security review.
 
+## Viva talking points
 
+React handles views and shared authentication state; Axios calls Express; middleware validates the cookie and identifies the user; Mongoose models persist owned records. Revenue is the sum of income, expenses are the sum of expense transactions, profit is revenue minus expenses, and profit margin is profit divided by revenue × 100. Integer paise avoid floating-point rounding in stored monetary values. Recharts visualizes aggregated API responses. CSV validation happens on the server during both preview and confirmation, and hashes identify repeat imports.
