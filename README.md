@@ -258,3 +258,12 @@ This intentionally intermediate project loads a user's matching transactions int
 ## Viva talking points
 
 React handles views and shared authentication state; Axios calls Express; middleware validates the cookie and identifies the user; Mongoose models persist owned records. Revenue is the sum of income, expenses are the sum of expense transactions, profit is revenue minus expenses, and profit margin is profit divided by revenue × 100. Integer paise avoid floating-point rounding in stored monetary values. Recharts visualizes aggregated API responses. CSV validation happens on the server during both preview and confirmation, and hashes identify repeat imports.
+
+
+### Vercel deployment
+
+Import the repository's codex/otp-production-deployment branch with Root Directory set to the repository root, not client or server. The committed vercel.json installs both packages, builds client/dist, serves React assets via the CDN and routes /api to a Node.js function. The API exports the same Express app used locally; it does not open a listening port on Vercel. MongoDB connections are shared by concurrent requests within a warm function, with a small pool.
+
+Set the production secrets listed above in Vercel Environment Variables, including NODE_ENV=production and CLIENT_ORIGIN equal to the exact final HTTPS domain without a trailing slash. Add /finsight after the Atlas hostname in MONGODB_URI (before any query string). Use new JWT and MFA keys; never reuse keys shown in screenshots. Rotate the exposed Atlas password before deployment. Configure Atlas network access for the deployment's outbound connectivity. Never put secrets in vercel.json or variables prefixed VITE_. Keep preview deployments disconnected from production data unless separately configured with their own database and exact origin.
+
+Vercel does not run the local Ollama service. The AI assistant remains unavailable online until a separate approved AI hosting/provider setup is completed. Login/AI throttles currently live in process memory and are not global across function instances; use shared durable throttling before opening registration to general public traffic. Check OTP delivery on the actual deployment. See [Vercel Node.js Functions](https://vercel.com/docs/functions/runtimes/node-js) and [project configuration](https://vercel.com/docs/project-configuration/vercel-json).
