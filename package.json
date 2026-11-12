@@ -1,1 +1,20 @@
-{"name":"finsight","private":true,"scripts":{"dev":"concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"","install:all":"npm install --prefix server && npm install --prefix client","build":"npm run build --prefix client","test":"npm test --prefix server","seed":"npm run seed --prefix server"},"devDependencies":{"concurrently":"^9.0.0"}}
+{
+  "name": "finsight",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "install:all": "npm install --prefix server && npm install --prefix client",
+    "build": "npm run build --prefix client",
+    "test": "npm test --prefix server",
+    "seed": "npm run seed --prefix server",
+    "start": "npm start --prefix server",
+    "build:deploy": "npm ci --prefix server --omit=dev && npm ci --prefix client --include=dev && npm run build --prefix client",
+    "heroku-postbuild": "npm run build:deploy"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}

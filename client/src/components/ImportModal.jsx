@@ -1,0 +1,16 @@
+import { useState } from 'react';
+import { UploadCloud, X, CheckCircle2 } from 'lucide-react';
+import api, { errorMessage, money } from '../services/api';
+export default function ImportModal({ onClose, onSaved }) {
+  const [file, setFile] = useState(null), [preview, setPreview] = useState(null), [result, setResult] = useState(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  async function send(confirm = false) {
+    setBusy(true); setError('');
+    try {
+      if (!file || !file.name.toLowerCase().endsWith('.csv') || file.size > 2 * 1024 * 1024) throw new Error('Choose a CSV file no larger than 2 MB.');
+      const data = new FormData(); data.append('file', file); data.append('confirm', String(confirm));
+      const response = await api.post('/upload/csv', data);
+      if (confirm) { setResult(response.data); onSaved(); } else setPreview(response.data);
+    } catch (err) { setError(err.response ? errorMessage(err) : err.message); } finally { setBusy(false); }
+  }
+  return <div className="modal-backdrop"><section className="modal wide" role="dialog" aria-modal="true" aria-labelledby="import-title"><div className="panel-heading"><div><h2 id="import-title">Import transactions</h2><p>Bring your finances together with a CSV file.</p></div><button className="icon-button" aria-label="Close" onClick={onClose}><X size={20}/></button></div>{result ? <div className="import-success"><CheckCircle2 size={42}/><h2>{result.imported} transactions imported</h2><p>{result.duplicates} duplicates skipped · {result.errors.length} invalid rows skipped</p><button className="button primary" onClick={onClose}>Done</button></div> : <><label className="upload-zone"><UploadCloud size={32}/><strong>{file?.name || 'Choose your CSV file'}</strong><span>CSV only · Up to 2 MB · Maximum 5,000 rows</span><input type="file" accept=".csv,text/csv" onChange={e => { setFile(e.target.files[0]); setPreview(null); setError(''); }}/></label><p className="helper">Required columns: title, amount, type, category, date, description.<br/>Amounts in rupees; type income or expense; dates YYYY-MM-DD.</p>{preview && <><div className="notice">{preview.validCount} ready to import · {preview.duplicates} duplicates · {preview.errors.length} invalid rows. Preview shows the first 20 valid rows.</div>{preview.errors.length > 0 && <div className="error import-errors">{preview.errors.slice(0,10).map(e => <p key={e.row}>Row {e.row}: {e.message}</p>)}{preview.errors.length > 10 && <p>…and {preview.errors.length - 10} more errors.</p>}</div>}<div className="table-scroll preview-table"><table><thead><tr><th>Title</th><th>Type</th><th>Amount</th></tr></thead><tbody>{preview.preview.map((r,i) => <tr key={i}><td>{r.title}</td><td>{r.type}</td><td>{money(r.amount)}</td></tr>)}</tbody></table></div></>}{error && <p className="error" role="alert">{error}</p>}<div className="modal-actions"><button className="button secondary" onClick={onClose}>Cancel</button><button disabled={!file || busy || (preview && !preview.validCount)} className="button primary" onClick={() => send(!!preview)}>{busy ? 'Processing…' : preview ? `Import ${preview.validCount} valid transactions` : 'Preview & validate'}</button></div></>}</section></div>;
+}
